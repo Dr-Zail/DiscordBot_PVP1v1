@@ -1,0 +1,32 @@
+{
+	"channelName" :	"duel_1v1",
+	"hoursBeforeChallenge" : "24",
+	"commands" : {
+		"help": {
+			"syntaxNames" : ["!help", "!aide"],
+			"functionName" : "CommandHelp"
+		},
+		"register": {
+			"syntaxNames" : ["!inscription", "!register"],
+			"functionName" : "CommandRegister"
+		},
+		"challenge" : {
+			"syntaxNames" : ["!challenge", "!defi", "!defier"],
+			"functionName" : "CommandChallenge"
+		},
+		"result" : {
+			"syntaxNames" : ["!resultat"],
+			"functionName" : "CommandResult"
+		},
+		"display_player_list": {
+			"syntaxNames" : ["!players"],
+			"functionName" : "CommandDisplayPlayerList"
+		}
+	},
+	"adminCommands" : {
+		"register": {
+			"syntaxNames" : ["!admin_inscription", "!admin_register"],
+			"functionName" : "AdminCommandRegister"
+		}
+	}
+}

@@ -1,13 +1,14 @@
 const Discord = require('discord.js');
 const options = require('./options.json');
+require('dotenv').config();
 const moment = require("moment");
 const sqlite3 = require("sqlite3"),
     TransactionDatabase = require("sqlite3-transactions").TransactionDatabase;
 
 var db = new TransactionDatabase(
     new sqlite3.Database("./duel_scores.sqlite", sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE)
-);	
-	
+);
+
 //const dbPromise = sql.open("./duel_scores.sqlite", { Promise });
 
 const client = new Discord.Client();
@@ -49,7 +50,7 @@ var CommandClass = function() {
 	{
 		message.channel.send('help');
 	};
-	
+
 	//------------------------------------------------------------
 	//----- 				REGISTER COMMAND				------
 	//------------------------------------------------------------
@@ -71,7 +72,7 @@ var CommandClass = function() {
 			console.log(err);
 		}
 	}
-	
+
 	//------------------------------------------------------------
 	//----- 				CHALLENGE COMMAND				------
 	//------------------------------------------------------------
@@ -81,13 +82,13 @@ var CommandClass = function() {
 		if (message.mentions.users.size != 1) return;
 		//Cannot challenge self or bots ;)
 		// if (message.mentions.users.first().id === message.author.id || message.mentions.users.array()[0].bot) return;
-		
+
 		if (!IsPlayerRegistered(message))
 		{
 			message.channel.send('Il faut etre inscris pour declarer un duel (' +  message.author + ')');
 			return;
 		}
-		
+
 		try {
 			//Check last duel declaration was at least 24h ago
 			db.get('SELECT lastDuelDeclarationTime FROM Players WHERE userId = ?', [message.author.id], function(err, row) {
@@ -96,7 +97,7 @@ var CommandClass = function() {
 					console.log('lastDuelDeclarationTime: '  + row.lastDuelDeclarationTime);
 					var declDate = moment(row.lastDuelDeclarationTime, 'YYYY-MM-DD HH:mm:ss');
 					var diff = moment().diff(declDate,'minutes');
-					
+
 					if (diff < options.hoursBeforeChallenge * 60)
 					{
 						message.channel.send('Impossible de declarer un duel, derniere declaration de duel par ' +  message.author + ' ete il y a moins de ' + options.hoursBeforeChallenge  + ' heures (' +  row.lastDuelDeclarationTime + ')');
@@ -104,19 +105,19 @@ var CommandClass = function() {
 					}
 				}
 
-				//Check player rank and division against challenged player 
+				//Check player rank and division against challenged player
 				db.get('SELECT lastDuelDeclarationTime FROM Players WHERE userId = ?', [message.author.id], function(err, row) {
-					
+
 				});
-				
-				
+
+
 				db.beginTransaction(function(err, transaction) {
 					transaction.run('INSERT INTO OnGoingDuels(defyingPlayer, defiedPlayer, declarationTime) VALUES(?, ?, ?)',
 					[message.author.id, message.mentions.users.array()[0].id, moment().format('YYYY-MM-DD HH:mm:ss')]);
-					
+
 					transaction.run('UPDATE Players SET lastDuelDeclarationTime = (?) WHERE userId = ?',
 					[ moment().format('YYYY-MM-DD HH:mm:ss'), message.author.id]);
-					
+
 					transaction.commit(function(err) {
 						if (err)
 							return console.log(err);
@@ -128,7 +129,7 @@ var CommandClass = function() {
 			console.log(err);
 		}
 	}
-	
+
 	//------------------------------------------------------------
 	//----- 				RESULT COMMAND					------
 	//------------------------------------------------------------
@@ -136,7 +137,7 @@ var CommandClass = function() {
 	{
 		//Nothing to do here, all is done in the "messageReactionAdd" event
 	}
-		
+
 	//------------------------------------------------------------
 	//-----  		DISPLAY PLAYER LIST COMMAND				------
 	//------------------------------------------------------------
@@ -148,7 +149,7 @@ var CommandClass = function() {
 			});
 			console.log(util.inspect(players));
 			formattedPlayersLists = 'Joueurs:';
-			
+
 			players.forEach((player) => {
 				formattedPlayersLists += '\n<@' +  player.userId + '>';
 			});
@@ -157,11 +158,11 @@ var CommandClass = function() {
 			console.log(err);
 		}
 	}
-	
+
 	//------------------------------------------------------------
 	//----- 		!!! 	ADMIN COMMANDS 		!!!			------
 	//------------------------------------------------------------
-	
+
 	//------------------------------------------------------------
 	//----- 			REGISTER ADMIN COMMAND				------
 	//------------------------------------------------------------
@@ -171,7 +172,7 @@ var CommandClass = function() {
 		if (message.mentions.users.size != 1) return;
 		//Cannot register bots ;)
 		// if (message.mentions.users.first().bot) return;
-		
+
 		try {
 			db.run("INSERT INTO Players (userId) VALUES (?)", [message.mentions.users.array()[0].id], function(err) {
 				if (err)
@@ -215,7 +216,7 @@ function ParseMessageAndExecuteCommand(message)
 			}
 		}
 	}
-	
+
 	//Player sending message has "admin" rights
 	//if (message.author.id == 'ADMIN')
 	{
@@ -234,9 +235,9 @@ function ParseMessageAndExecuteCommand(message)
 			}
 		}
 	}
-	
+
 	//------------------------------------------------------------
-	//----- 			Messages non traités 				------
+	//----- 			Messages non traitÃ©s 				------
 	//------------------------------------------------------------
 	if (message.content.lastIndexOf('!', 0) === 0)
 	{
@@ -259,33 +260,33 @@ function IsExcludedMessage(message)
 client.on('message',  message => {
 	if (IsExcludedMessage(message))
 		return;
-	
+
 	console.log('message.content: ' + message.content);
-	
+
 	ParseMessageAndExecuteCommand(message);
 });
 
 //Callback on event messageReactionAdd to check result of a duel
 client.on('messageReactionAdd', async  (messageReaction, user) => {
-	
+
 	console.log('Add reaction!');
-	
+
 	//------------------------------------------------------------
 	//----- 		Verifie le contenu du message quand		------
 	//----- 		une reaction est ajoute					------
 	//------------------------------------------------------------
 	//Au moins 2 mention d'un autre utilisateur dans le message
 	if (messageReaction.message.mentions.users.size < 2) return;
-	
+
 	//Verifie le formattage de la chaine et capture les noms des joueurs
 	var regex = RegExp('!' + options.admin_commands.inscription + ' *(<@[0-9]*>) *VS *(<@[0-9]*>) *=* *(<@[0-9]*>)', 'gi');
 	var result = regex.exec(messageReaction.message.content);
-	
+
 	if (result == null) return;
-	
+
 	//Verifie que les 2 participants ne sont pas le meme user
 	if (result[1] != result[2]) return;
-	//Verifie que le user qui a reagit au message fait partie de ceux mentionné (pareil pour l'auteur)
+	//Verifie que le user qui a reagit au message fait partie de ceux mentionnï¿½ (pareil pour l'auteur)
 	if (user.id != result[1] && user.id != result[2]) return;
 	console.log('OK1');
 	if (messageReaction.message.author.id != result[1] && messageReaction.message.author.id != result[2]) return;
@@ -294,9 +295,9 @@ client.on('messageReactionAdd', async  (messageReaction, user) => {
 	if (messageReaction.message.author.id != result[3] && user.id != result[2]) return;
 	console.log('OK3');
 
-	
+
 	try {
-		db.run('INSERT INTO DuelsDone(winner, loser, resultTime) VALUES(?, ?, datetime(\'now\'))', 
+		db.run('INSERT INTO DuelsDone(winner, loser, resultTime) VALUES(?, ?, datetime(\'now\'))',
 			[result[3], result[2] != result[3] ? result[2] : result[1]], function(err) {
 				console.log(err);
 		});
@@ -304,7 +305,7 @@ client.on('messageReactionAdd', async  (messageReaction, user) => {
 	} catch (err) {
 		console.log(err);
 	}
-	
+
 });
 
 //Verify JSON and commands functions
@@ -321,4 +322,4 @@ client.on("ready", () => {
 	VerifyJSONAndCommandClass();
 });
 
-client.login(options.auth.token);
+client.login(process.env.DISCCORD_TOKEN);

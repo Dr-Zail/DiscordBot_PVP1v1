@@ -1,0 +1,17 @@
+{
+  "name": "greeter-bot",
+  "version": "1.0.0",
+  "description": "My own Discord bot",
+  "main": "bot.js",
+  "scripts": {
+    "start": "node bot.js"
+  },
+  "author": "Dr.Z",
+  "dependencies": {
+    "discord.js": "^11.3.2",
+    "dotenv": "^5.0.1",
+    "moment": "^2.22.1",
+    "sqlite3": "^4.0.0",
+    "sqlite3-transactions": "^0.0.5"
+  }
+}
