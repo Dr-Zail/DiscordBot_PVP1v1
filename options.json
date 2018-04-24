@@ -18,15 +18,31 @@
 			"syntaxNames" : ["!resultat"],
 			"functionName" : "CommandResult"
 		},
-		"display_player_list": {
+		"displayPlayerList": {
 			"syntaxNames" : ["!players"],
 			"functionName" : "CommandDisplayPlayerList"
+		},
+		"onGoingDuels": {
+			"syntaxNames" : ["!MesDuels", "!OnGoingDuels"],
+			"functionName" : "CommandDisplayOnGoingDuels"
 		}
 	},
 	"adminCommands" : {
 		"register": {
 			"syntaxNames" : ["!admin_inscription", "!admin_register"],
 			"functionName" : "AdminCommandRegister"
+		},
+		"result": {
+			"syntaxNames" : ["!admin_resultat"],
+			"functionName" : "AdminCommandResult"
+		},
+		"displayAllOngoingDuels": {
+			"syntaxNames" : ["!admin_displayOnGoingDuels"],
+			"functionName" : "AdminCommandDisplayOnGoingDuels"
+		},
+		"changePlayerRankAndDivision": {
+			"syntaxNames" : ["!admin_changePlayerRankAndDivision"],
+			"functionName" : "AdminCommandChangePlayerRankAndDivision"
 		}
 	}
 }

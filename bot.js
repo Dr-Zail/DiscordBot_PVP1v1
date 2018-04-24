@@ -16,41 +16,48 @@ const client = new Discord.Client();
 //DEBUG
 const util = require('util')
 
-//For most of the commands, player must already be registered, check DB to make sure he is
-async function IsPlayerRegistered(userId) {
-    try {
-        var playerExists = await db.get('SELECT * FROM Players WHERE userId = ?', [userId], function(err, row) {
-            if (err) {
+//The class that contain all the command function
+//All function are associated to a "functionName" value defined in the JSON corresponding file
+var HelperClass = function() {
+
+    //For most of the commands, player must already be registered, check DB to make sure he is
+    this.IsPlayerRegistered = async function(userId) {
+        try {
+            var playerExists = await db.get('SELECT * FROM Players WHERE userId = ?', [userId], function(err, row) {
+                if (err) {
+                    console.log(err);
+                    return false;
+                }
+                if (row == undefined)
+                    return false;
+                    console.log('Player is registered');
+                    return true;
+                });
+                return playerExists;
+            } catch (err) {
                 console.log(err);
                 return false;
             }
-            if (row == undefined)
-                return false;
-            console.log('Player is registered');
-            return true;
-        });
-        return playerExists;
-    } catch (err) {
-        console.log(err);
         return false;
     }
-    return false;
-}
 
-function CheckRankAndDivisionForDuel(challengerId, player1Id, player1Div, player1Rank, player2Id, player2Div, player2Rank) {
-    //Players not in same division
-    if (player1Div != player2Div)
+    this.CheckRankAndDivisionForDuel = function(challengerId, player1Id, player1Div, player1Rank, player2Id, player2Div, player2Rank) {
+        //Players not in same division
+        if (player1Div != player2Div)
         return false;
 
-    //Not sure about the order of playerId when retrieved from the DB, so check against challengerId and then check rank order
-    if (challengerId == player1Id && player1Rank > player2Rank) {
+        //Not sure about the order of playerId when retrieved from the DB, so check against challengerId and then check rank order
+        if (challengerId == player1Id && player1Rank > player2Rank) {
             return true;
+        }
+        else if (challengerId == player2Id && player2Rank > player1Rank) {
+            return true;
+        }
+        return false;
     }
-    else if (challengerId == player2Id && player2Rank > player1Rank) {
-        return true;
-    }
-    return false;
 }
+
+var helperFunctions = new HelperClass();
 
 //The class that contain all the command function
 //All function are associated to a "functionName" value defined in the JSON corresponding file
@@ -92,13 +99,13 @@ var CommandClass = function() {
         // if (message.mentions.users.array()[0].id === message.author.id || message.mentions.users.array()[0].id.bot) return;
 
         //Check if message author is registered
-        if (!IsPlayerRegistered(message.author.id)) {
+        if (!helperFunctions.IsPlayerRegistered(message.author.id)) {
             message.channel.send('Il faut etre inscris pour declarer un duel (' + message.author + ')');
             return;
         }
 
         //Check if challenged player is registered
-        if (!IsPlayerRegistered(message.mentions.users.array()[0].id)) {
+        if (!helperFunctions.IsPlayerRegistered(message.mentions.users.array()[0].id)) {
             message.channel.send(message.mentions.users.array()[0].id + ' n\'est pas inscris pour les duels');
             return;
         }
@@ -137,7 +144,7 @@ var CommandClass = function() {
                     console.log('Player1 id: ' + row[0].userId + ' rank: ' + row[0].rank + ' division: ' + row[0].division);
                     console.log('Player2 id: ' + row[1].userId + ' rank: ' + row[1].rank + ' division: ' + row[1].division);
 
-                    if (CheckRankAndDivisionForDuel(message.author.id, row[0].userId, row[0].division, row[0].rank, row[1].userId, row[1].division, row[1].rank)) {
+                    if (helperFunctions.CheckRankAndDivisionForDuel(message.author.id, row[0].userId, row[0].division, row[0].rank, row[1].userId, row[1].division, row[1].rank)) {
                     //Make sure player can declare duel to other player according to rank and division
                         db.beginTransaction(function(err, transaction) {
                             transaction.run('INSERT INTO OnGoingDuels(defyingPlayer, defiedPlayer, declarationTime) VALUES(?, ?, ?)', [message.author.id, message.mentions.users.array()[0].id, moment().format('YYYY-MM-DD HH:mm:ss')]);
@@ -191,6 +198,41 @@ var CommandClass = function() {
     }
 
     //------------------------------------------------------------
+    //-----     DISPLAY ON GOING DUELS FOR A PLAYER			------
+    //------------------------------------------------------------
+    this.CommandDisplayOnGoingDuels = function(message) {
+        //Check if message author is registered
+        if (!helperFunctions.IsPlayerRegistered(message.author.id)) {
+            message.channel.send('Il faut etre inscris pour afficher ses duels (' + message.author + ')');
+            return;
+        }
+
+        try {
+            db.all('SELECT * FROM OnGoingDuels WHERE defyingPlayer = ? OR defiedPlayer = ?', [message.author.id, message.author.id], function(err, rows) {
+                if (err) {
+                    console.log(err);
+                    return;
+                }
+
+                console.log(util.inspect(rows));
+
+                if (rows == null || rows.length == 0) {
+                    message.channel.send('Vous n\'avez aucun duel en cours actuellement');
+                    return;
+                }
+
+                formattedDuelLists = 'Duels:';
+                rows.forEach((duel) => {
+                    formattedDuelLists += '\n<@' + duel.defyingPlayer + '>' + ' VS <@' + duel.defiedPlayer + '>';
+                });
+                message.channel.send(formattedDuelLists);
+            });
+        } catch (err) {
+            console.log(err);
+        }
+    }
+
+    //------------------------------------------------------------
     //----- 		!!! 	ADMIN COMMANDS 		!!!			------
     //------------------------------------------------------------
 
@@ -198,6 +240,78 @@ var CommandClass = function() {
     //----- 			REGISTER ADMIN COMMAND				------
     //------------------------------------------------------------
     this.AdminCommandRegister = function(message) {
+        //At least 1 mention of a user
+        if (message.mentions.users.size != 1) return;
+        //Cannot register bots ;)
+        // if (message.mentions.users.first().bot) return;
+
+        try {
+            db.run("INSERT INTO Players (userId) VALUES (?)", [message.mentions.users.array()[0].id], function(err) {
+                if (err) {
+                    if (err.code === 'SQLITE_CONSTRAINT')
+                        message.channel.send(message.mentions.users.array()[0] + ' deja inscris');
+                    else
+                        console.log(err);
+                } else
+                    message.channel.send(message.mentions.users.array()[0] + ' inscris pour les duels !');
+            });
+        } catch (err) {
+            console.log(err);
+        }
+    }
+
+    //------------------------------------------------------------
+    //----- 			RESULT ADMIN COMMAND				------
+    //------------------------------------------------------------
+    this.AdminCommandResult = function(message) {
+        //At least 1 mention of a user
+        if (message.mentions.users.size != 1) return;
+        //Cannot register bots ;)
+        // if (message.mentions.users.first().bot) return;
+
+        try {
+            db.run("INSERT INTO Players (userId) VALUES (?)", [message.mentions.users.array()[0].id], function(err) {
+                if (err) {
+                    if (err.code === 'SQLITE_CONSTRAINT')
+                        message.channel.send(message.mentions.users.array()[0] + ' deja inscris');
+                    else
+                        console.log(err);
+                } else
+                    message.channel.send(message.mentions.users.array()[0] + ' inscris pour les duels !');
+            });
+        } catch (err) {
+            console.log(err);
+        }
+    }
+
+    //------------------------------------------------------------
+    //-----     DISPLAY ONGOING DUELS ADMIN COMMAND			------
+    //------------------------------------------------------------
+    this.AdminCommandDisplayOnGoingDuels = function(message) {
+        //At least 1 mention of a user
+        if (message.mentions.users.size != 1) return;
+        //Cannot register bots ;)
+        // if (message.mentions.users.first().bot) return;
+
+        try {
+            db.run("INSERT INTO Players (userId) VALUES (?)", [message.mentions.users.array()[0].id], function(err) {
+                if (err) {
+                    if (err.code === 'SQLITE_CONSTRAINT')
+                        message.channel.send(message.mentions.users.array()[0] + ' deja inscris');
+                    else
+                        console.log(err);
+                } else
+                    message.channel.send(message.mentions.users.array()[0] + ' inscris pour les duels !');
+            });
+        } catch (err) {
+            console.log(err);
+        }
+    }
+
+    //------------------------------------------------------------
+    //-----     CHANGE PLAYER RANK / DIVISION ADMIN COMMAND	------
+    //------------------------------------------------------------
+    this.AdminCommandChangePlayerRankAndDivision = function(message) {
         //At least 1 mention of a user
         if (message.mentions.users.size != 1) return;
         //Cannot register bots ;)
