@@ -44,7 +44,7 @@ var HelperClass = function() {
     this.CheckRankAndDivisionForDuel = function(challengerId, player1Id, player1Div, player1Rank, player2Id, player2Div, player2Rank) {
         //Players not in same division
         if (player1Div != player2Div)
-        return false;
+            return false;
 
         //Not sure about the order of playerId when retrieved from the DB, so check against challengerId and then check rank order
         if (challengerId == player1Id && player1Rank > player2Rank) {
@@ -75,15 +75,29 @@ var CommandClass = function() {
     //------------------------------------------------------------
     this.CommandRegister = function(message) {
         try {
-            db.run('INSERT INTO Players (userId) VALUES (?)', [message.author.id], function(err) {
-                if (err) {
-                    if (err.code == 'SQLITE_CONSTRAINT')
-                        message.channel.send(message.author + ' deja inscris');
+            db.beginTransaction(function(err, transaction) {
+                transaction.run('INSERT INTO Players (userId, division, rank) VALUES (?, (SELECT NextRegister_Division FROM Info), (SELECT NextRegister_Rank FROM Info))', [message.author.id]);
+
+                //See http://sql.sh/cours/case -> UPDATE avec CASE
+                transaction.run('UPDATE Info SET NextRegister_Division = (CASE WHEN NextRegister_Division == 0 THEN 1 WHEN NextRegister_Division == 1 THEN 2 FROM Info), NextRegister_Rank = ((SELECT NextRegister_Rank FROM Info) + 1) WHERE id >= 0');
+
+                transaction.commit(function(err) {
+                    if (err)
+                        return console.log(err);
                     else
-                        console.log(err);
-                } else
-                    message.channel.send(message.author + ' inscris pour les duels !');
+                        message.channel.send(message.author + ' inscris pour les duels (division: ' + 0 + ' rank: ' + 0 + ')!');
+                });
             });
+
+            // db.run('INSERT INTO Players (userId, division, rank) VALUES (?, (SELECT NextRegister_Division FROM Info), (SELECT NextRegister_Rank FROM Info))', [message.author.id], function(err) {
+            //     if (err) {
+            //         if (err.code == 'SQLITE_CONSTRAINT')
+            //             message.channel.send(message.author + ' deja inscris');
+            //         else
+            //             console.log(err);
+            //     } else
+            //         message.channel.send(message.author + ' inscris pour les duels (division: ' + 0 + ' rank: ' + 0 + ')!');
+            // });
         } catch (err) {
             console.log(err);
         }

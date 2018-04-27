@@ -1,6 +1,11 @@
 {
 	"channelName" :	"duel_1v1",
 	"hoursBeforeChallenge" : "24",
+	"divisions" : [
+		{ "name" : "Champions", "nbPlayers" : 18, "TopPlayers" : 6, "BottomPlayers" : 6 },
+		{ "name" : "Combattans", "nbPlayers" : 18, "TopPlayers" : 6, "BottomPlayers" : 6 },
+		{ "name" : "Outsiders", "nbPlayers" : 100, "TopPlayers" : 6, "BottomPlayers" : 0 }
+	],
 	"commands" : {
 		"help": {
 			"syntaxNames" : ["!help", "!aide"],
