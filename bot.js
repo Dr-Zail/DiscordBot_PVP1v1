@@ -2,11 +2,12 @@ const Discord = require('discord.js');
 const options = require('./options.json');
 require('dotenv').config();
 const moment = require("moment");
+const sqlite = require("sqlite");
 const sqlite3 = require("sqlite3"),
     TransactionDatabase = require("sqlite3-transactions").TransactionDatabase;
 
 var db = new TransactionDatabase(
-    new sqlite3.Database("./duel_scores.sqlite", sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE)
+    new sqlite3.Database("./duel_scores.sqlite", sqlite3.OPEN_READWRITE)
 );
 
 //const dbPromise =+ sql.open("./duel_scores.sqlite", { Promise });
@@ -30,28 +31,78 @@ var HelperClass = function() {
                 }
                 if (row == undefined)
                     return false;
-                    console.log('Player is registered');
-                    return true;
-                });
-                return playerExists;
-            } catch (err) {
-                console.log(err);
-                return false;
-            }
+                //TODO: Test if await/async is working properly
+                console.log('Player is registered');
+                return true;
+            });
+            return playerExists;
+        } catch (err) {
+            console.log(err);
+            return false;
+        }
         return false;
     }
 
-    this.CheckRankAndDivisionForDuel = function(challengerId, player1Id, player1Div, player1Rank, player2Id, player2Div, player2Rank) {
+    this.CheckRankAndDivisionForDuel = function(challenger, playerChallenged) {
         //Players not in same division
-        if (player1Div != player2Div)
+        if (challenger.division != playerChallenged.division)
             return false;
 
-        //Not sure about the order of playerId when retrieved from the DB, so check against challengerId and then check rank order
-        if (challengerId == player1Id && player1Rank > player2Rank) {
+        //Challenger must have an inferior rank than the challenged player
+        if (challenger.rank < playerChallenged.rank)
             return true;
+        return false;
+    }
+
+    this.GetPlayerInfo = async function(playerId) {
+        try {
+            var playerInfo = await db.get('SELECT * FROM Players WHERE userId = ?', [playerId], function(err, row) {
+                if (err) {
+                    console.log(err);
+                    return null;
+                }
+                return row;
+            });
+            //TODO: Test if await/async is working properly
+            console.log('transac object: ' + playerInfo);
+            return playerInfo;
+        } catch (err) {
+            console.log(err);
         }
-        else if (challengerId == player2Id && player2Rank > player1Rank) {
-            return true;
+        return null;
+    }
+
+    this.InsertNewPlayerInDB = async function(user) {
+        try {
+            var playerInserted = db.beginTransaction(function(err, transaction) {
+                transaction.run('INSERT INTO Players (userId, division, rank)\
+                                    VALUES (?, (SELECT NextRegister_Division FROM Info), (SELECT NextRegister_Rank FROM Info))', [user.id]);
+
+                //Update the info for the next register command
+                transaction.run('UPDATE Info SET NextRegister_Division = (CASE\
+                                    WHEN NextRegister_Division == 1 AND NextRegister_Rank >= ? THEN 2\
+                                    WHEN NextRegister_Division == 2 AND NextRegister_Rank >= ? THEN 3\
+                                    ELSE NextRegister_Division\
+                                    END),\
+                                NextRegister_Rank = (CASE\
+                                    WHEN NextRegister_Division == 1 AND NextRegister_Rank >= ? THEN 1\
+                                    WHEN NextRegister_Division == 2 AND NextRegister_Rank >= ? THEN 1\
+                                    ELSE NextRegister_Rank + 1\
+                                    END)\
+                                WHERE id >= 0', [options.divisions[0].nbPlayers, options.divisions[1].nbPlayers, options.divisions[0].nbPlayers, options.divisions[1].nbPlayers]);
+
+                transaction.commit(function(err) {
+                    if (err) {
+                        console.log(err);
+                        return false;
+                    } else
+                        return true;
+                });
+                return true;
+            });
+            return playerInserted;
+        } catch (err) {
+            console.log(err);
         }
         return false;
     }
@@ -73,33 +124,14 @@ var CommandClass = function() {
     //------------------------------------------------------------
     //----- 				REGISTER COMMAND				------
     //------------------------------------------------------------
-    this.CommandRegister = function(message) {
-        try {
-            db.beginTransaction(function(err, transaction) {
-                transaction.run('INSERT INTO Players (userId, division, rank) VALUES (?, (SELECT NextRegister_Division FROM Info), (SELECT NextRegister_Rank FROM Info))', [message.author.id]);
-
-                //See http://sql.sh/cours/case -> UPDATE avec CASE
-                transaction.run('UPDATE Info SET NextRegister_Division = (CASE WHEN NextRegister_Division == 0 THEN 1 WHEN NextRegister_Division == 1 THEN 2 FROM Info), NextRegister_Rank = ((SELECT NextRegister_Rank FROM Info) + 1) WHERE id >= 0');
-
-                transaction.commit(function(err) {
-                    if (err)
-                        return console.log(err);
-                    else
-                        message.channel.send(message.author + ' inscris pour les duels (division: ' + 0 + ' rank: ' + 0 + ')!');
-                });
-            });
-
-            // db.run('INSERT INTO Players (userId, division, rank) VALUES (?, (SELECT NextRegister_Division FROM Info), (SELECT NextRegister_Rank FROM Info))', [message.author.id], function(err) {
-            //     if (err) {
-            //         if (err.code == 'SQLITE_CONSTRAINT')
-            //             message.channel.send(message.author + ' deja inscris');
-            //         else
-            //             console.log(err);
-            //     } else
-            //         message.channel.send(message.author + ' inscris pour les duels (division: ' + 0 + ' rank: ' + 0 + ')!');
-            // });
-        } catch (err) {
-            console.log(err);
+    this.CommandRegister = async function(message) {
+        if (helperFunctions.InsertNewPlayerInDB(message.author)) {
+            var playerInfo = helperFunctions.GetPlayerInfo(message.author.id);
+            console.log('playerInfo' + playerInfo);
+            if (playerInfo !== null)
+                message.channel.send(message.author + ' inscris pour les duels (division: ' + playerInfo.division + ' rang: ' + playerInfo.rank + ')');
+            else
+                console.log('Error retrieving playerInfo from DB');
         }
     }
 
@@ -126,57 +158,46 @@ var CommandClass = function() {
 
         try {
             //TODO: Make only 1 request to get all players info
+            db.all('SELECT * FROM Players WHERE userId IN (?, ?)', [message.author.id, message.mentions.users.array()[0].id], function(err, rows) {
+                if (err) {
+                    console.log(err);
+                    return;
+                }
 
-            //Check last duel declaration was at least 24h ago
-            db.get('SELECT lastDuelDeclarationTime FROM Players WHERE userId = ?', [message.author.id], function(err, row) {
-                if (row != undefined) {
-                    console.log('lastDuelDeclarationTime: ' + row.lastDuelDeclarationTime);
-                    var declDate = moment(row.lastDuelDeclarationTime, 'YYYY-MM-DD HH:mm:ss');
-                    var diff = moment().diff(declDate, 'minutes');
+                var challenger = rows[0].userId == message.author.id ? rows[0] : rows[1];
+                var playerChallenged = rows[0].userId == message.author.id ? rows[1] : rows[0];
 
-                    if (diff < options.hoursBeforeChallenge * 60) {
-                        message.channel.send('Impossible de declarer un duel, derniere declaration de duel par ' + message.author + ' ete il y a moins de ' + options.hoursBeforeChallenge + ' heures (' + row.lastDuelDeclarationTime + ')');
-                        return;
-                    }
+                //Check last duel declaration was at least 24h ago
+                console.log('lastDuelDeclarationTime: ' + challenger.lastDuelDeclarationTime);
+                var declDate = moment(challenger.lastDuelDeclarationTime, 'YYYY-MM-DD HH:mm:ss');
+                var diff = moment().diff(declDate, 'minutes');
+                if (diff < options.hoursBeforeChallenge * 60) {
+                    message.channel.send('Impossible de declarer un duel, derniere declaration de duel par ' + message.author + ' ete il y a moins de ' + options.hoursBeforeChallenge + ' heures (' + challenger.lastDuelDeclarationTime + ')');
+                    return;
                 }
 
                 //Check player rank and division against challenged player
-                db.all('SELECT userId, rank, division FROM Players WHERE userId IN (?, ?)', [message.author.id, message.mentions.users.array()[0].id], function(err, row) {
-                    if (err) {
-                        console.log(err);
-                        return;
-                    }
+                console.log(row);
+                console.log('Challenger id: ' + challenger.userId + ' rank: ' + challenger.rank + ' division: ' + challenger.division);
+                console.log('Challenged id: ' + playerChallenged.userId + ' rank: ' + playerChallenged.rank + ' division: ' + playerChallenged.division);
 
-                    //Not enough players info found (someone may not be registered)
-                    //Should not happen because we already checked if both players were registered
-                    if (row.length < 2) {
-                        console.log(err);
-                        return;
-                    }
-
-                    console.log(row);
-                    console.log('Player1 id: ' + row[0].userId + ' rank: ' + row[0].rank + ' division: ' + row[0].division);
-                    console.log('Player2 id: ' + row[1].userId + ' rank: ' + row[1].rank + ' division: ' + row[1].division);
-
-                    if (helperFunctions.CheckRankAndDivisionForDuel(message.author.id, row[0].userId, row[0].division, row[0].rank, row[1].userId, row[1].division, row[1].rank)) {
+                if (helperFunctions.CheckRankAndDivisionForDuel(challenger, playerChallenged)) {
                     //Make sure player can declare duel to other player according to rank and division
-                        db.beginTransaction(function(err, transaction) {
-                            transaction.run('INSERT INTO OnGoingDuels(defyingPlayer, defiedPlayer, declarationTime) VALUES(?, ?, ?)', [message.author.id, message.mentions.users.array()[0].id, moment().format('YYYY-MM-DD HH:mm:ss')]);
+                    db.beginTransaction(function(err, transaction) {
+                        transaction.run('INSERT INTO OnGoingDuels(defyingPlayer, defiedPlayer, declarationTime) VALUES(?, ?, ?)', [challenger.userId, playerChallenged.userID, moment().format('YYYY-MM-DD HH:mm:ss')]);
 
-                            transaction.run('UPDATE Players SET lastDuelDeclarationTime = (?) WHERE userId = ?', [moment().format('YYYY-MM-DD HH:mm:ss'), message.author.id]);
+                        transaction.run('UPDATE Players SET lastDuelDeclarationTime = (?) WHERE userId = ?', [moment().format('YYYY-MM-DD HH:mm:ss'), message.author.id]);
 
-                            transaction.commit(function(err) {
-                                if (err)
-                                    return console.log(err);
-                                else
-                                    message.channel.send('Duel lance entre ' + message.author + ' et ' + message.mentions.users.array()[0]);
-                            });
+                        transaction.commit(function(err) {
+                            if (err)
+                                return console.log(err);
+                            else
+                                message.channel.send('Duel lance entre ' + message.author + ' et ' + message.mentions.users.array()[0]);
                         });
-                    }
-                    else {
-                        message.channel.send('Impossible de declarer un duel, il faut etre dans la meme division et avoir un rang inferieur');
-                    }
-                });
+                    });
+                } else {
+                    message.channel.send('Impossible de declarer un duel, il faut etre dans la meme division et avoir un rang inferieur');
+                }
             });
         } catch (err) {
             console.log(err);
@@ -259,19 +280,8 @@ var CommandClass = function() {
         //Cannot register bots ;)
         // if (message.mentions.users.first().bot) return;
 
-        try {
-            db.run("INSERT INTO Players (userId) VALUES (?)", [message.mentions.users.array()[0].id], function(err) {
-                if (err) {
-                    if (err.code === 'SQLITE_CONSTRAINT')
-                        message.channel.send(message.mentions.users.array()[0] + ' deja inscris');
-                    else
-                        console.log(err);
-                } else
-                    message.channel.send(message.mentions.users.array()[0] + ' inscris pour les duels !');
-            });
-        } catch (err) {
-            console.log(err);
-        }
+        if (helperFunctions.InsertNewPlayerInDB(message.mentions.users.array()[0]))
+            message.channel.send(message.mentions.users.array()[0] + ' inscris pour les duels (division: ' + row.division + ' rang: ' + row.rank + ')');
     }
 
     //------------------------------------------------------------
