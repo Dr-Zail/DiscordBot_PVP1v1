@@ -12,6 +12,16 @@ var db = new TransactionDatabase(
 
 //const dbPromise =+ sql.open("./duel_scores.sqlite", { Promise });
 
+//----------------------------
+//INSTALL better-sqlite3
+//https://github.com/JoshuaWise/better-sqlite3/wiki/Troubleshooting-installation
+//----------------------------
+
+
+
+
+
+
 const client = new Discord.Client();
 
 //DEBUG
