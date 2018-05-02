@@ -2,15 +2,9 @@ const Discord = require('discord.js');
 const options = require('./options.json');
 require('dotenv').config();
 const moment = require("moment");
-const sqlite = require("sqlite");
-const sqlite3 = require("sqlite3"),
-    TransactionDatabase = require("sqlite3-transactions").TransactionDatabase;
+const sqlite = require("better-sqlite3");
 
-var db = new TransactionDatabase(
-    new sqlite3.Database("./duel_scores.sqlite", sqlite3.OPEN_READWRITE)
-);
-
-//const dbPromise =+ sql.open("./duel_scores.sqlite", { Promise });
+var db = new sqlite('./duel_scores.sqlite', options);
 
 //----------------------------
 //INSTALL better-sqlite3
@@ -34,7 +28,8 @@ var HelperClass = function() {
     //For most of the commands, player must already be registered, check DB to make sure he is
     this.IsPlayerRegistered = async function(userId) {
         try {
-            var playerExists = await db.get('SELECT * FROM Players WHERE userId = ?', [userId], function(err, row) {
+            var playerExistRequest = db.prepare('SELECT * FROM Players WHERE userId = ?');
+            var playerExists = await playerExistRequest.get([userId], function(err, row) {
                 if (err) {
                     console.log(err);
                     return false;
@@ -84,33 +79,54 @@ var HelperClass = function() {
 
     this.InsertNewPlayerInDB = async function(user) {
         try {
-            var playerInserted = db.beginTransaction(function(err, transaction) {
-                transaction.run('INSERT INTO Players (userId, division, rank)\
-                                    VALUES (?, (SELECT NextRegister_Division FROM Info), (SELECT NextRegister_Rank FROM Info))', [user.id]);
+            var transaction = db.transaction([
+                'INSERT INTO Players (userId, division, rank)\
+                    VALUES (@userId, (SELECT NextRegister_Division FROM Info), (SELECT NextRegister_Rank FROM Info))',
+                'UPDATE Info SET NextRegister_Division = (CASE\
+                                        WHEN NextRegister_Division == 1 AND NextRegister_Rank >= @division1_nbPlayers THEN 2\
+                                        WHEN NextRegister_Division == 2 AND NextRegister_Rank >= @division2_nbPlayers THEN 3\
+                                        ELSE NextRegister_Division\
+                                        END),\
+                                    NextRegister_Rank = (CASE\
+                                        WHEN NextRegister_Division == 1 AND NextRegister_Rank >= @division1_nbPlayers THEN 1\
+                                        WHEN NextRegister_Division == 2 AND NextRegister_Rank >= @division2_nbPlayers THEN 1\
+                                        ELSE NextRegister_Rank + 1\
+                                        END)\
+                                    WHERE id >= 0'
+            ]);
 
-                //Update the info for the next register command
-                transaction.run('UPDATE Info SET NextRegister_Division = (CASE\
-                                    WHEN NextRegister_Division == 1 AND NextRegister_Rank >= ? THEN 2\
-                                    WHEN NextRegister_Division == 2 AND NextRegister_Rank >= ? THEN 3\
-                                    ELSE NextRegister_Division\
-                                    END),\
-                                NextRegister_Rank = (CASE\
-                                    WHEN NextRegister_Division == 1 AND NextRegister_Rank >= ? THEN 1\
-                                    WHEN NextRegister_Division == 2 AND NextRegister_Rank >= ? THEN 1\
-                                    ELSE NextRegister_Rank + 1\
-                                    END)\
-                                WHERE id >= 0', [options.divisions[0].nbPlayers, options.divisions[1].nbPlayers, options.divisions[0].nbPlayers, options.divisions[1].nbPlayers]);
+            var ret = transaction.run({userId: user.id, division1_nbPlayers: options.divisions[0].nbPlayers, division2_nbPlayers: options.divisions[1].nbPlayers});
+            console.log('ret : ' + util.inspect(ret));
 
-                transaction.commit(function(err) {
-                    if (err) {
-                        console.log(err);
-                        return false;
-                    } else
-                        return true;
-                });
-                return true;
-            });
-            return playerInserted;
+
+
+            // var playerInserted = db.beginTransaction(function(err, transaction) {
+            //     transaction.run('INSERT INTO Players (userId, division, rank)\
+            //                         VALUES (?, (SELECT NextRegister_Division FROM Info), (SELECT NextRegister_Rank FROM Info))', [user.id]);
+            //
+            //     //Update the info for the next register command
+            //     transaction.run('UPDATE Info SET NextRegister_Division = (CASE\
+            //                         WHEN NextRegister_Division == 1 AND NextRegister_Rank >= ? THEN 2\
+            //                         WHEN NextRegister_Division == 2 AND NextRegister_Rank >= ? THEN 3\
+            //                         ELSE NextRegister_Division\
+            //                         END),\
+            //                     NextRegister_Rank = (CASE\
+            //                         WHEN NextRegister_Division == 1 AND NextRegister_Rank >= ? THEN 1\
+            //                         WHEN NextRegister_Division == 2 AND NextRegister_Rank >= ? THEN 1\
+            //                         ELSE NextRegister_Rank + 1\
+            //                         END)\
+            //                     WHERE id >= 0', [options.divisions[0].nbPlayers, options.divisions[1].nbPlayers, options.divisions[0].nbPlayers, options.divisions[1].nbPlayers]);
+            //
+            //     transaction.commit(function(err) {
+            //         if (err) {
+            //             console.log(err);
+            //             return false;
+            //         } else
+            //             return true;
+            //     });
+            //     return true;
+            // });
+            // return playerInserted;
         } catch (err) {
             console.log(err);
         }
@@ -226,17 +242,20 @@ var CommandClass = function() {
     //------------------------------------------------------------
     this.CommandDisplayPlayerList = function(message) {
         try {
-            db.all('SELECT * FROM Players', function(err, rows) {
-                console.log(err);
-
-                console.log(util.inspect(rows));
-                formattedPlayersLists = 'Joueurs:';
-
-                rows.forEach((player) => {
-                    formattedPlayersLists += '\n<@' + player.userId + '>' + ' division: ' + player.division + ' rank: ' + player.rank;
-                });
-                message.channel.send(formattedPlayersLists);
-            });
+            var playerListRequest = db.prepare('SELECT * FROM Players');
+            var playerList = playerListRequest.all();
+            console.log('playerList:' + util.inspect(playerList));
+            // playerListRequest.all(function(err, rows) {
+            //     console.log(err);
+            //
+            //     console.log(util.inspect(rows));
+            //     formattedPlayersLists = 'Joueurs:';
+            //
+            //     rows.forEach((player) => {
+            //         formattedPlayersLists += '\n<@' + player.userId + '>' + ' division: ' + player.division + ' rank: ' + player.rank;
+            //     });
+            //     message.channel.send(formattedPlayersLists);
+            // });
         } catch (err) {
             console.log(err);
         }
@@ -484,6 +503,7 @@ function VerifyJSONAndCommandClass() {
 
 client.on("ready", () => {
     VerifyJSONAndCommandClass();
+    console.log('Bot is ready');
 });
 
 client.login(process.env.DISCCORD_TOKEN);
