@@ -2,9 +2,9 @@
 	"channelName" :	"duel_1v1",
 	"hoursBeforeChallenge" : "24",
 	"divisions" : [
-		{ "name" : "Champions", "nbPlayers" : 3, "TopPlayers" : 6, "BottomPlayers" : 6 },
-		{ "name" : "Combattans", "nbPlayers" : 4, "TopPlayers" : 6, "BottomPlayers" : 6 },
-		{ "name" : "Outsiders", "nbPlayers" : 100, "TopPlayers" : 6, "BottomPlayers" : 0 }
+		{ "name" : "Champions", "nbPlayers" : 9, "topPlayers" : 1, "bottomPlayers" : 3 },
+		{ "name" : "Combattans", "nbPlayers" : 9, "topPlayers" : 3, "bottomPlayers" : 3 },
+		{ "name" : "Outsiders", "nbPlayers" : 100, "topPlayers" : 6, "bottomPlayers" : 0 }
 	],
 	"commands" : {
 		"help": {
@@ -37,17 +37,21 @@
 			"syntaxNames" : ["!admin_inscription", "!admin_register"],
 			"functionName" : "AdminCommandRegister"
 		},
-		"result": {
-			"syntaxNames" : ["!admin_resultat"],
-			"functionName" : "AdminCommandResult"
+		"forceResult": {
+			"syntaxNames" : ["!admin_forceResult"],
+			"functionName" : "AdminCommandForceResult"
 		},
 		"displayAllOngoingDuels": {
 			"syntaxNames" : ["!admin_displayOnGoingDuels"],
-			"functionName" : "AdminCommandDisplayOnGoingDuels"
+			"functionName" : "AdminCommandDisplayAllOnGoingDuels"
 		},
 		"changePlayerRankAndDivision": {
 			"syntaxNames" : ["!admin_changePlayerRankAndDivision"],
 			"functionName" : "AdminCommandChangePlayerRankAndDivision"
+		},
+		"forceWeeklyUpdate": {
+			"syntaxNames" : ["!admin_forceWeeklyUpdate"],
+			"functionName" : "AdminCommandForceWeeklyUpdate"
 		}
 	}
 }

@@ -3,52 +3,42 @@ const options = require('./options.json');
 require('dotenv').config();
 const moment = require("moment");
 const sqlite = require("better-sqlite3");
+const util = require('util')
 
 var db = new sqlite('./duel_scores.sqlite', options);
 
+const client = new Discord.Client();
 //----------------------------
 //INSTALL better-sqlite3
 //https://github.com/JoshuaWise/better-sqlite3/wiki/Troubleshooting-installation
 //----------------------------
 
-const client = new Discord.Client();
-
-//DEBUG
-const util = require('util')
-
-//The class that contain all the command function
-//All function are associated to a "functionName" value defined in the JSON corresponding file
+//The class that contain all the helper function (usually functions with DB queries)
 var HelperClass = function() {
 
     //For most of the commands, player must already be registered, check DB to make sure he is
     this.IsPlayerRegistered = function(userId) {
         try {
             var playerExistRequest = db.prepare('SELECT * FROM Players WHERE userId = ?');
-            var playerExists = playerExistRequest.get([userId], function(err, row) {
-                if (err) {
-                    console.log('Error: ' + err);
-                    return false;
-                }
-                if (row == undefined)
-                    return false;
-                console.log('Player is registered');
-                return true;
-            });
-            return playerExists;
+            var playerExists = playerExistRequest.get([userId]);
+            if (playerExists === undefined)
+                return false;
+            return true;
         } catch (err) {
-            console.log('Error: ' + err);
-            return false;
+            console.log(err);
         }
         return false;
     }
 
     this.CheckRankAndDivisionForDuel = function(challenger, playerChallenged) {
+        console.log('challenger: ' + util.inspect(challenger));
+        console.log('playerChallenged: ' + util.inspect(playerChallenged));
         //Players not in same division
         if (challenger.division != playerChallenged.division)
             return false;
 
         //Challenger must have an inferior rank than the challenged player
-        if (challenger.rank < playerChallenged.rank)
+        if (challenger.rank > playerChallenged.rank)
             return true;
         return false;
     }
@@ -59,9 +49,9 @@ var HelperClass = function() {
             var playerInfo = request.get(playerId);
             return playerInfo;
         } catch (err) {
-            console.log('Error: ' + err);
+            console.log(err);
         }
-        return null;
+        return undefined;
     }
 
     this.InsertNewPlayerInDB = function(user) {
@@ -85,7 +75,61 @@ var HelperClass = function() {
             var ret = transaction.run({userId: user.id, division1_nbPlayers: options.divisions[0].nbPlayers, division2_nbPlayers: options.divisions[1].nbPlayers});
             return true;
         } catch (err) {
-            console.log('Error: ' + err);
+            console.log(err);
+            return err.code;
+        }
+        return false;
+    }
+
+    this.DoWeeklyUpdate = function(channel) {
+        //TODO: Make a DB backup ;)
+
+        //TODO: Make sure there are no pending duels
+        try {
+            //Retrieve all players info
+            var allPlayersRequest = db.prepare('SELECT * FROM Players ORDER BY division, rank ASC');
+            var allPlayers = allPlayersRequest.all();
+
+            if (allPlayers.length < options.divisions[0].nbPlayers + 1) {
+                console.log('Not enough players(' + allPlayers.length + ') to change divisions/ranks');
+                return false,
+            }
+
+            //Check all info, and create necessary argument bindings to update players divisions and ranks
+            var weeklyArgsBind = [];
+
+            var defaultRequest = 'UPDATE SET division = @newDiv, rank = @newRank WHERE userId = @userId';
+            var nbArgs = 0;  //Division offset
+            var nbPlayersInPrevDiv = 0;
+            //Iterate on divisions info set in the options
+            //According to number of players that should go down
+            for (var divisionIdx = 0; divisionIdx < options.divisions.length; ++divisionIdx) {
+                //------- Make players go UP --------
+                //No UP for division 1
+                if (i > 0) {
+                    var firstPlayerOffsetToGoUp = nbPlayersInPrevDiv;
+
+
+                }
+
+                //------- Make players go DOWN ------
+                var firstPlayerOffsetToGoDown = nbPlayersInPrevDiv + options.divisions[divisionIdx].nbPlayers - options.divisions[divisionIdx].bottomPlayers - 1;
+
+                for (var playerIdx = firstPlayerOffsetToGoDown; playerIdx < allPlayers.length; ++firstPlayerOffsetToGoDown) {
+                    weeklyArgsBind[nbArgs++] = {userId: allPlayers[playerIdx]};
+                }
+
+                nbPlayersInPrevDiv += options.divisions[divisionIdx].nbPlayers;
+            }
+
+            var transactionWeeklyUpdate = db.transaction([
+                'UPDATE Players(division, rank) SET(@division, @rank)',
+            ]);
+
+            //TODO: A request to check all players rank/division, make sure all rank follows each other and there no overlapping ranks
+            return true;
+        } catch (err) {
+            console.log(err);
             return err.code;
         }
         return false;
@@ -112,7 +156,7 @@ var CommandClass = function() {
         var ret = helperFunctions.InsertNewPlayerInDB(message.author)
         if (ret === true) {
             var playerInfo = helperFunctions.GetPlayerInfo(message.author.id);
-            if (playerInfo !== null)
+            if (playerInfo !== undefined)
                 message.channel.send(message.author + ' inscris pour les duels (division: ' + playerInfo.division + ' rang: ' + playerInfo.rank + ')');
             else
                 console.log('Error retrieving playerInfo from DB');
@@ -138,7 +182,7 @@ var CommandClass = function() {
 
         //Check if challenged player is registered
         if (!helperFunctions.IsPlayerRegistered(message.mentions.users.array()[0].id)) {
-            message.channel.send(message.mentions.users.array()[0].id + ' n\'est pas inscris pour les duels');
+            message.channel.send(message.mentions.users.array()[0] + ' n\'est pas inscris pour les duels');
             return;
         }
 
@@ -146,35 +190,36 @@ var CommandClass = function() {
             var playerInfoChallenger = helperFunctions.GetPlayerInfo(message.author.id);
             var challengedPlayerInfo = helperFunctions.GetPlayerInfo(message.mentions.users.array()[0].id);
 
-            if (playerInfoChallenger === null || challengedPlayerInfo === null) {
+            if (playerInfoChallenger === undefined || challengedPlayerInfo === undefined) {
                 console.log('Error: cannot retrieve 1 of the player info for challenge command');
                 return;
             }
 
+            console.log('playerInfoChallenger:' + playerInfoChallenger + ' challengedPlayerInfo: ' + challengedPlayerInfo);
+
             //Check last duel declaration was at least 24h ago
-            console.log('lastDuelDeclarationTime: ' + challenger.lastDuelDeclarationTime);
-            var declDate = moment(challenger.lastDuelDeclarationTime, 'YYYY-MM-DD HH:mm:ss');
+            console.log('lastDuelDeclarationTime: ' + playerInfoChallenger.lastDuelDeclarationTime);
+            var declDate = moment(playerInfoChallenger.lastDuelDeclarationTime, 'YYYY-MM-DD HH:mm:ss');
             var diff = moment().diff(declDate, 'minutes');
             if (diff < options.hoursBeforeChallenge * 60) {
                 message.channel.send('Impossible de declarer un duel, derniere declaration de duel par ' + message.author + ' ete il y a moins de ' + options.hoursBeforeChallenge + ' heures (' + challenger.lastDuelDeclarationTime + ')');
                 return;
             }
             //Check player rank and division against challenged player
-            console.log(row);
-            console.log('Challenger id: ' + challenger.userId + ' rank: ' + challenger.rank + ' division: ' + challenger.division);
-            console.log('Challenged id: ' + playerChallenged.userId + ' rank: ' + playerChallenged.rank + ' division: ' + playerChallenged.division);
+            console.log('Challenger id: ' + playerInfoChallenger.userId + ' rank: ' + playerInfoChallenger.rank + ' division: ' + playerInfoChallenger.division);
+            console.log('Challenged id: ' + challengedPlayerInfo.userId + ' rank: ' + challengedPlayerInfo.rank + ' division: ' + challengedPlayerInfo.division);
             //Make sure player can declare duel to other player according to rank and division
             if (helperFunctions.CheckRankAndDivisionForDuel(playerInfoChallenger, challengedPlayerInfo)) {
                 var transactionChallenge = db.transaction(['INSERT INTO OnGoingDuels(defyingPlayer, defiedPlayer, declarationTime) VALUES(@defyingPlayer, @defiedPlayer, @declTime)',
                                                 'UPDATE Players SET lastDuelDeclarationTime = (@declTime) WHERE userId = @userId']);
 
-                var ret = transactionChallenge.run({defyingPlayer: challenger.userId, defiedPlayer: playerChallenged.userID, declTime: moment().format('YYYY-MM-DD HH:mm:ss'), userId: user.id});
+                var ret = transactionChallenge.run({defyingPlayer: playerInfoChallenger.userId, defiedPlayer: challengedPlayerInfo.userId, declTime: moment().format('YYYY-MM-DD HH:mm:ss'), userId: playerInfoChallenger.userId});
                 message.channel.send('Duel lance entre ' + message.author + ' et ' + message.mentions.users.array()[0]);
             } else {
                 message.channel.send('Impossible de declarer un duel, il faut etre dans la meme division et avoir un rang inferieur');
             }
         } catch (err) {
-            console.log('Error: ' + err);
+            console.log(err);
         }
     }
 
@@ -190,22 +235,23 @@ var CommandClass = function() {
     //------------------------------------------------------------
     this.CommandDisplayPlayerList = function(message) {
         try {
-            var playerListRequest = db.prepare('SELECT * FROM Players');
+            var playerListRequest = db.prepare('SELECT * FROM Players ORDER BY division, rank ASC');
             var playerList = playerListRequest.all();
-            console.log('playerList:' + util.inspect(playerList));
-            // playerListRequest.all(function(err, rows) {
-            //     console.log(err);
-            //
-            //     console.log(util.inspect(rows));
-            //     formattedPlayersLists = 'Joueurs:';
-            //
-            //     rows.forEach((player) => {
-            //         formattedPlayersLists += '\n<@' + player.userId + '>' + ' division: ' + player.division + ' rank: ' + player.rank;
-            //     });
-            //     message.channel.send(formattedPlayersLists);
-            // });
+
+            var formattedPlayersLists = 'Joueurs:\n\n ----- DIVISION 1 -----';
+
+            var currentDivision = 1;
+            playerList.forEach((player) => {
+                if (currentDivision < player.division) {
+                    formattedPlayersLists += '\n\n----- DIVISION ' + ++currentDivision + ' -----';
+                }
+                //For now display raw id, some id in DB are fake
+                // formattedPlayersLists += '\n<@' + player.userId + '>' + ' division: ' + player.division + ' rank: ' + player.rank;
+                formattedPlayersLists += '\n<' + player.userId + '>' + ' division: ' + player.division + ' rank: ' + player.rank;
+            });
+            message.channel.send(formattedPlayersLists);
         } catch (err) {
-            console.log('Error: ' + err);
+            console.log(err);
         }
     }
 
@@ -220,27 +266,20 @@ var CommandClass = function() {
         }
 
         try {
-            db.all('SELECT * FROM OnGoingDuels WHERE defyingPlayer = ? OR defiedPlayer = ?', [message.author.id, message.author.id], function(err, rows) {
-                if (err) {
-                    console.log('Error: ' + err);
-                    return;
-                }
+            var playerDuelsRequest = db.prepare('SELECT * FROM OnGoingDuels WHERE defyingPlayer = @userId OR defiedPlayer = @userId');
+            var playerDuels = playerDuelsRequest.all({userId: message.author.id});
 
-                console.log(util.inspect(rows));
-
-                if (rows == null || rows.length == 0) {
-                    message.channel.send('Vous n\'avez aucun duel en cours actuellement');
-                    return;
-                }
-
-                formattedDuelLists = 'Duels:';
-                rows.forEach((duel) => {
-                    formattedDuelLists += '\n<@' + duel.defyingPlayer + '>' + ' VS <@' + duel.defiedPlayer + '>';
-                });
-                message.channel.send(formattedDuelLists);
+            if (playerDuels === undefined || playerDuels.length == 0) {
+                message.channel.send('Vous n\'avez aucun duel en cours actuellement');
+                return;
+            }
+            formattedDuelLists = 'Duels:';
+            playerDuels.forEach((duel) => {
+                formattedDuelLists += '\n<@' + duel.defyingPlayer + '> VS <@' + duel.defiedPlayer + '>';
             });
+            message.channel.send(formattedDuelLists);
         } catch (err) {
-            console.log('Error: ' + err);
+            console.log(err);
         }
     }
 
@@ -260,10 +299,10 @@ var CommandClass = function() {
         var ret = helperFunctions.InsertNewPlayerInDB(message.mentions.users.array()[0]);
         if (ret === true) {
             var playerInfo = helperFunctions.GetPlayerInfo(message.mentions.users.array()[0].id);
-            if (playerInfo !== null)
+            if (playerInfo !== undefined)
                 message.channel.send(message.mentions.users.array()[0] + ' inscris pour les duels (division: ' + playerInfo.division + ' rang: ' + playerInfo.rank + ')');
             else
-                console.log('Error: cannot retireve plauyer info after instert into DB');
+                console.log('Error: cannot retreive player info after instert into DB');
         }
         else {
             message.channel.send(message.mentions.users.array()[0] + ' deja inscris');
@@ -271,32 +310,39 @@ var CommandClass = function() {
     }
 
     //------------------------------------------------------------
-    //----- 			RESULT ADMIN COMMAND				------
+    //----- 		FORCE RESULT ADMIN COMMAND				------
     //------------------------------------------------------------
-    this.AdminCommandResult = function(message) {
+    this.AdminCommandForceResult = function(message) {
         //At least 1 mention of a user
-        if (message.mentions.users.size != 1) return;
+        if (message.mentions.users.size != 2) return;
         //Cannot register bots ;)
         // if (message.mentions.users.first().bot) return;
 
         try {
         } catch (err) {
-            console.log('Error: ' + err);
+            console.log(err);
         }
     }
 
     //------------------------------------------------------------
-    //-----     DISPLAY ONGOING DUELS ADMIN COMMAND			------
+    //-----     DISPLAY ALL ONGOING DUELS ADMIN COMMAND		------
     //------------------------------------------------------------
-    this.AdminCommandDisplayOnGoingDuels = function(message) {
-        //At least 1 mention of a user
-        if (message.mentions.users.size != 1) return;
-        //Cannot register bots ;)
-        // if (message.mentions.users.first().bot) return;
-
+    this.AdminCommandDisplayAllOnGoingDuels = function(message) {
         try {
+            var playerDuelsRequest = db.prepare('SELECT * FROM OnGoingDuels');
+            var playerDuels = playerDuelsRequest.all({userId: message.author.id});
+
+            if (playerDuels === undefined || playerDuels.length == 0) {
+                message.channel.send('Il n\'y a aucun duel en cours');
+                return;
+            }
+            formattedDuelLists = 'Duels en cours:';
+            playerDuels.forEach((duel) => {
+                formattedDuelLists += '\n<@' + duel.defyingPlayer + '> VS <@' + duel.defiedPlayer + '>';
+            });
+            message.channel.send(formattedDuelLists);
         } catch (err) {
-            console.log('Error: ' + err);
+            console.log(err);
         }
     }
 
@@ -311,8 +357,15 @@ var CommandClass = function() {
 
         try {
         } catch (err) {
-            console.log('Error: ' + err);
+            console.log(err);
         }
+    }
+
+    //------------------------------------------------------------
+    //-----       FORCE WEEKLY UPDATE ADMIN COMMAND         ------
+    //------------------------------------------------------------
+    this.AdminCommandForceWeeklyUpdate = function(message) {
+        helperFunctions.DoWeeklyUpdate(message.channel);
     }
 }
 
@@ -398,7 +451,7 @@ client.on('messageReactionAdd', (messageReaction, user) => {
     var regex = RegExp('!' + options.admin_commands.inscription + ' *(<@[0-9]*>) *VS *(<@[0-9]*>) *=* *(<@[0-9]*>)', 'gi');
     var result = regex.exec(messageReaction.message.content);
 
-    if (result == null) return;
+    if (result == undefined) return;
 
     //Verifie que les 2 participants ne sont pas le meme user
     if (result[1] != result[2]) return;
@@ -418,7 +471,7 @@ client.on('messageReactionAdd', (messageReaction, user) => {
         });
         messageReaction.message.channel.send('Resultat confirme pour le duel entre ' + result[1] + ' et ' + result[2] + ' Vainqueur: ' + result[3]);
     } catch (err) {
-        console.log('Error: ' + err);
+        console.log(err);
     }
 
 });
